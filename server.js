@@ -1,65 +1,62 @@
 const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-// Store latest frame
-let latestFrame = null;
+const USER_ID = "adhanu99";
+const PASSWORD = "CallmeDJ@99";
 
-// Health check (important for Render)
+app.use(express.json());
+
+// LOGIN API
+app.post("/login", (req, res) => {
+  const { id, password } = req.body;
+
+  if (id === USER_ID && password === PASSWORD) {
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false });
+  }
+});
+
+// HEALTH
 app.get("/", (req, res) => {
-  res.send("ESP32 Stream Server Running 🚀");
+  res.send("Server Running 🚀");
 });
 
-// Receive image from ESP32
-app.post("/upload", (req, res) => {
-  let chunks = [];
+// WEBSOCKET
+wss.on("connection", (ws) => {
+  let isAuth = false;
 
-  req.on("data", chunk => {
-    chunks.push(chunk);
-  });
+  ws.on("message", (message) => {
+    try {
+      const msg = JSON.parse(message);
 
-  req.on("end", () => {
-    latestFrame = Buffer.concat(chunks);
-    res.status(200).send("OK");
-  });
-
-  req.on("error", err => {
-    console.error("Upload error:", err);
-    res.sendStatus(500);
-  });
-});
-
-// Stream endpoint
-app.get("/stream", (req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "multipart/x-mixed-replace; boundary=frame",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "Pragma": "no-cache"
-  });
-
-  const interval = setInterval(() => {
-    if (latestFrame) {
-      try {
-        res.write("--frame\r\n");
-        res.write("Content-Type: image/jpeg\r\n\r\n");
-        res.write(latestFrame);
-        res.write("\r\n");
-      } catch (err) {
-        console.log("Client disconnected");
-        clearInterval(interval);
+      if (msg.type === "auth") {
+        if (msg.id === USER_ID && msg.password === PASSWORD) {
+          isAuth = true;
+          ws.send(JSON.stringify({ type: "auth", status: "ok" }));
+        } else {
+          ws.close();
+        }
+        return;
       }
-    }
-  }, 100); // ~10 FPS
+    } catch {}
 
-  req.on("close", () => {
-    clearInterval(interval);
-    console.log("Stream closed");
+    if (!isAuth) return;
+
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
   });
 });
 
-// Use Render PORT
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
