@@ -1,30 +1,65 @@
 const express = require("express");
 const app = express();
 
+// Store latest frame
 let latestFrame = null;
 
-app.post("/upload", (req, res) => {
-  let data = [];
+// Health check (important for Render)
+app.get("/", (req, res) => {
+  res.send("ESP32 Stream Server Running 🚀");
+});
 
-  req.on("data", chunk => data.push(chunk));
+// Receive image from ESP32
+app.post("/upload", (req, res) => {
+  let chunks = [];
+
+  req.on("data", chunk => {
+    chunks.push(chunk);
+  });
+
   req.on("end", () => {
-    latestFrame = Buffer.concat(data);
-    res.send("OK");
+    latestFrame = Buffer.concat(chunks);
+    res.status(200).send("OK");
+  });
+
+  req.on("error", err => {
+    console.error("Upload error:", err);
+    res.sendStatus(500);
   });
 });
 
+// Stream endpoint
 app.get("/stream", (req, res) => {
   res.writeHead(200, {
-    "Content-Type": "multipart/x-mixed-replace; boundary=frame"
+    "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Pragma": "no-cache"
   });
 
-  setInterval(() => {
+  const interval = setInterval(() => {
     if (latestFrame) {
-      res.write(--frame\r\nContent-Type: image/jpeg\r\n\r\n);
-      res.write(latestFrame);
-      res.write("\r\n");
+      try {
+        res.write("--frame\r\n");
+        res.write("Content-Type: image/jpeg\r\n\r\n");
+        res.write(latestFrame);
+        res.write("\r\n");
+      } catch (err) {
+        console.log("Client disconnected");
+        clearInterval(interval);
+      }
     }
-  }, 100);
+  }, 100); // ~10 FPS
+
+  req.on("close", () => {
+    clearInterval(interval);
+    console.log("Stream closed");
+  });
 });
 
-app.listen(3000, () => console.log("Server running"));
+// Use Render PORT
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(Server running on port ${PORT});
+});
