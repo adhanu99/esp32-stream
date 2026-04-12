@@ -10,59 +10,51 @@ const USER_ID = "adhanu99";
 const PASSWORD = "CallmeDJ@99";
 
 let esp32Client = null;
-let lastFrameTime = 0;
+let lastFrameTime = Date.now();
 
-app.get("/", (req, res) => res.send("Streamer Active"));
+app.get("/", (req, res) => res.send("System Live"));
 
+// 🔥 STABILITY: Active Health Check
 setInterval(() => {
-  if (lastFrameTime !== 0 && Date.now() - lastFrameTime > 3000) {
+  if (esp32Client && (Date.now() - lastFrameTime > 5000)) {
+    console.log("ESP32 Timeout - Cleaning connection");
     broadcast({ type: "status", value: "offline" });
-    console.log("[Stream] Status: ESP32 went Offline");
-    lastFrameTime = 0;
+    esp32Client.terminate();
+    esp32Client = null;
   }
-}, 2000);
+}, 3000);
 
 function broadcast(data) {
   const msg = typeof data === "string" ? data : JSON.stringify(data);
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) client.send(msg);
+  wss.clients.forEach(c => {
+    if (c.readyState === WebSocket.OPEN) c.send(msg);
   });
 }
 
 wss.on("connection", (ws) => {
-  console.log("[WS] New Connection Initialized");
-
-  ws.on("message", (message) => {
-    // 1. Handle JSON/Text (Auth or LED Commands)
+  ws.on("message", (msg) => {
+    // 1. Auth & Commands
     try {
-      const data = JSON.parse(message);
-      
-      // Auth from ESP32
+      const data = JSON.parse(msg);
       if (data.type === "auth" && data.id === USER_ID && data.password === PASSWORD) {
         esp32Client = ws;
+        lastFrameTime = Date.now();
         broadcast({ type: "status", value: "online" });
-        console.log("[Auth] ESP32 Authenticated ✅");
         return;
       }
-    } catch (e) { /* Binary Frame Data */ }
+    } catch (e) {}
 
-    // 2. Handle LED Commands from UI
-    if (message.toString() === "LED_ON" || message.toString() === "LED_OFF") {
-      if (esp32Client && esp32Client.readyState === WebSocket.OPEN) {
-        esp32Client.send(message.toString());
-        console.log(`[Command] Forwarding to ESP32: ${message}`);
-      }
+    const cmd = msg.toString();
+    if (cmd === "LED_ON" || cmd === "LED_OFF") {
+      if (esp32Client) esp32Client.send(cmd);
       return;
     }
 
-    // 3. Handle Video Stream from ESP32
+    // 2. Stream handling
     if (ws === esp32Client) {
-      if (lastFrameTime === 0) console.log("[Stream] Video Signal Received ✅");
       lastFrameTime = Date.now();
-      wss.clients.forEach(client => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(message); 
-        }
+      wss.clients.forEach(c => {
+        if (c !== ws && c.readyState === WebSocket.OPEN) c.send(msg);
       });
     }
   });
@@ -71,7 +63,6 @@ wss.on("connection", (ws) => {
     if (ws === esp32Client) {
       esp32Client = null;
       broadcast({ type: "status", value: "offline" });
-      console.log("[WS] ESP32 Connection Closed");
     }
   });
 });
