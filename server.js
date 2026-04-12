@@ -1,70 +1,64 @@
-const express = require("express");
-const http = require("http");
 const WebSocket = require("ws");
+const http = require("http");
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-
-const USER_ID = "adhanu99";
-const PASSWORD = "CallmeDJ@99";
-
-let esp32Client = null;
-let lastFrameTime = Date.now();
-
-app.get("/", (req, res) => res.send("System Live"));
-
-// 🔥 STABILITY: Active Health Check
-setInterval(() => {
-  if (esp32Client && (Date.now() - lastFrameTime > 5000)) {
-    console.log("ESP32 Timeout - Cleaning connection");
-    broadcast({ type: "status", value: "offline" });
-    esp32Client.terminate();
-    esp32Client = null;
-  }
-}, 3000);
-
-function broadcast(data) {
-  const msg = typeof data === "string" ? data : JSON.stringify(data);
-  wss.clients.forEach(c => {
-    if (c.readyState === WebSocket.OPEN) c.send(msg);
-  });
-}
-
-wss.on("connection", (ws) => {
-  ws.on("message", (msg) => {
-    // 1. Auth & Commands
-    try {
-      const data = JSON.parse(msg);
-      if (data.type === "auth" && data.id === USER_ID && data.password === PASSWORD) {
-        esp32Client = ws;
-        lastFrameTime = Date.now();
-        broadcast({ type: "status", value: "online" });
-        return;
-      }
-    } catch (e) {}
-
-    const cmd = msg.toString();
-    if (cmd === "LED_ON" || cmd === "LED_OFF") {
-      if (esp32Client) esp32Client.send(cmd);
-      return;
+// HTTP Server for Render's Health Check & Keep-Alive
+const server = http.createServer((req, res) => {
+    if (req.url === "/ping") {
+        res.writeHead(200);
+        res.end("Server is Awake");
+    } else {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("ESP32 Cloud Streamer Online");
     }
-
-    // 2. Stream handling
-    if (ws === esp32Client) {
-      lastFrameTime = Date.now();
-      wss.clients.forEach(c => {
-        if (c !== ws && c.readyState === WebSocket.OPEN) c.send(msg);
-      });
-    }
-  });
-
-  ws.on("close", () => {
-    if (ws === esp32Client) {
-      esp32Client = null;
-      broadcast({ type: "status", value: "offline" });
-    }
-  });
 });
 
-server.listen(process.env.PORT || 3000);
+const wss = new WebSocket.Server({ server });
+
+// Security & Connection State
+const AUTH = { id: "adhanu99", pass: "CallmeDJ@99" };
+let esp32Socket = null;
+
+wss.on("connection", (ws) => {
+    console.log("New client connected.");
+
+    ws.on("message", (msg) => {
+        // 1. Handle JSON (Authentication or Status)
+        try {
+            const data = JSON.parse(msg);
+            if (data.id === AUTH.id && data.password === AUTH.pass) {
+                esp32Socket = ws;
+                console.log("ESP32 Authenticated ✅");
+                return;
+            }
+        } catch (e) { /* Not JSON, proceed to binary/text */ }
+
+        // 2. Handle LED Commands (Browser -> ESP32)
+        const command = msg.toString();
+        if (command === "LED_ON" || command === "LED_OFF") {
+            if (esp32Socket && esp32Socket.readyState === WebSocket.OPEN) {
+                esp32Socket.send(command);
+                console.log(`Command sent: ${command}`);
+            }
+            return;
+        }
+
+        // 3. Broadcast Video (ESP32 -> All Browsers)
+        if (ws === esp32Socket) {
+            wss.clients.forEach((client) => {
+                if (client !== ws && client.readyState === WebSocket.OPEN) {
+                    client.send(msg); // Forward raw binary JPEG
+                }
+            });
+        }
+    });
+
+    ws.on("close", () => {
+        if (ws === esp32Socket) {
+            esp32Socket = null;
+            console.log("ESP32 Disconnected ❌");
+        }
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server live on port ${PORT}`));
