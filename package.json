@@ -1,7 +1,6 @@
 {
-  "name": "esp32-open-streamer",
+  "name": "esp32-relay-server",
   "version": "1.0.0",
-  "description": "Lag-free ESP32-CAM relay for Render",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
